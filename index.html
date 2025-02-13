@@ -1,1 +1,214 @@
-Test!
+<div class="tip" markdown="1">
+
+    # A Better Gillespie Algorithm
+
+    ## The state
+
+    The idea is to do a $\tau$-leaping step, check if it is valid, and if it isn't, to apply the appropriate
+    corrections.
+
+    We have to store a lot of data. The state is going to be (Formulated as Python objects for simplicity):
+
+    ```python
+    @dataclass
+    class Reaction:
+    reactants: list[int]
+    stoichiometry: list[tuple[int, int]]
+
+    @dataclass
+    class ReactionData:
+    reactant_set: list[int]
+    reactant_product: int
+    event_count: int
+    low_reactant_product: int
+    low_event_count: int
+
+    reactants: list[list[int]]
+    reaction_data: list[list[ReactionData]]
+    extra_propensity: list[int]
+    extra_propensity_reacts: list[bool]
+    ```
+
+    Ideally we would store the number of times each reactant appears as a simple list of integers. However, we might
+    have to add corrections to the number of times each reactant appears. Thus, for every reactant we have a list of the
+    initial count, the first correction, the second correction, and so on. For every reactant, let the i'th "correction
+    set" be the number of reactants added by the i'th correction, stored in `reactants[:, i]`.
+
+    Similarly, for every reaction we store the "Reaction data". The reaction data includes the `event_count`, the number
+    of times some reaction took place, and the `reactant_set`, the correction set of each reactant tracked by this
+    reaction, and the `reactant_product`, which is the product of the reactant counts when the event count was sampled.
+    The reactant product might not be accurate if some of the reactants were actually consumed by other reactions, and
+    we track the effect of that on the number of events. To track that, we store the `low_reactant_product` and the
+    `low_event_count`, which are the lower bound on the number of reactants and the number of events for the reaction if
+    the lower bound is true.
+
+    In addition, the products of the reactions might also have reactions of their own. To track that, we need ###
+
+
+
+    Every step of the algorithm will advance the simulation for a period of $t$. Thus, the function signature would be:
+
+    ```python
+    def fastspie(reactants: list[int], time: float):
+    ...
+    ```
+
+    ## The positive recursion
+
+    We first have to establish upper bounds for the number of reactants. To do this
+
+    The first step of the algorithm is to sample for every reaction the number of events, ignoring effects from
+    reactants. We now check if, assuming that reactants are only created, they could have reacted too. We don't sample
+    how many events would have occurred to reduce bookkeeping.
+
+    ```python
+    def initialize_extra_propensity_events(reactants: list[list[int]],
+    reaction_data: list[list[ReactionData]]) -> list[bool]:
+    """
+    Checks for each reaction if given the reactants created by each reaction,
+    extra events would have taken place.
+    """
+    ...
+    ```
+
+    For every reaction, we compute the extra propensity that would be created if reactants were only created by
+    reactions. Given that extra propensity, we sample if at least one event would have taken place. When the extra
+    propensity is small no additional reactions take place.
+
+
+
+    If such reactions do take place, we have to split the time-step to two halves. This has several steps:
+
+    Let the two halves be the "left half" taking place first, and the "right half" taking place second.
+
+    I will assume that the reaction data can be split easily, and return to that later.
+
+    ```python
+    @dataclass
+    class ReactionData:
+    ...
+
+    def split(self, left_time: float, right_time: float) -> tuple[ReactionData, ReactionData]:
+    ...
+    ```
+
+    We also split the "Would the extra propensity cause at least one event" information.
+
+    ```python
+    def split_extra_propensity_reactions(
+    reaction: Reaction,
+    extra_propensity: int,
+    reacts: bool,
+    left_time: float,
+    right_time: float) -> tuple[bool, bool]:
+    """
+    Splits the information of whether the extra propensity
+    induces more reaction events.
+    """
+    ...
+    ```
+
+    After splitting, we recursively advance the simulation through the first half and compute the reactant corrections.
+    We sample how many reaction events these new reactants have, and update the extra propensity. This has a two cases,
+    depending on if the new reactant product is larger or smaller than the previous extra propensity.
+
+    ```python
+    def positive_recursion(
+    reactions: list[Reaction],
+    reactants: list[list[int]],
+    reaction_data: list[list[ReactionData]],
+    extra_propensities: list[int],
+    extra_propensities_react: list[int],
+    time: float) -> list[int]:
+    """
+    A recursion splitting time until the extra reactants do not have further reactions.
+    """
+    # Updating the upper bounds.
+    new_extra_propensity = update_extra_propensity(reactants, reaction_data)
+    upper_bound_events = update_upper_bound_events(extra_propensity, new_extra_propensity)
+
+    if any(extra_propensities_react):
+    # Splitting the data to two halves.
+    left_reaction_data = []
+    right_reaction_data = []
+
+    for rdata_list in reaction_data:
+    left_rdata_list = []
+    right_rdata_list = []
+    for rdata in rdata_list:
+    left_rdata, right_rdata = rdata.split(time / 2, time / 2)
+    left_rdata_list.append(left_rdata)
+    right_rdata_list.append(right_rdata)
+    left_reaction_data.append(left_rdata_list)
+    right_reaction_data.append(right_rdata_list)
+
+    left_upper_bound_events = []
+    right_upper_bound_events = []
+
+    for reaction, extra_propensity, extra_propensity_reacts in zip(
+    reactions, extra_propensities, extra_propensities_react):
+    left_reacts, right_reacts = split_extra_propensity_reactions(
+    reaction,
+    extra_propensity,
+    extra_propensity_reacts,
+    time / 2,
+    time / 2
+    )
+    left_upper_bound_events.append(left_events)
+    right_upper_bound_events.append(right_events)
+
+    # Simulating the left half.
+    reactant_updates = positive_recursion(
+    reactions,
+    reactants,
+    left_reaction_data,
+    extra_propensity,
+    left_upper_bound_events
+    )
+    # Sampling reactions for the newly created reactants.
+    # We have to take into account that we have already sampled a number of
+    # events for them in the "upper_bound_events".
+    reaction_data_updates = sample_reaction_data(
+    reactions,
+    reactants,
+    reactant_updates,
+    extra_propensity,
+    right_upper_bound_events
+    )
+
+    # Updating the reactants
+    for reactant_list, update in zip(reactants, reactant_updates):
+    reactant_list.append(update)
+
+    # Updating the reaction data.
+    for reaction_data_list, update in zip(reaction_data, reactant_updates):
+    reaction_data_list.append(update)
+
+    # Updating the upper bounds.
+    extra_propensity, right_upper_bound_events = update_extra_propensity(
+    reactant_list, reaction_data, extra_propensity, right_upper_bound_events
+    )
+
+    # Advancing the recursion through the next half of the time-segment.
+    return positive_recursion(
+    reactants,
+    right_reaction_data,
+    extra_propensity,
+    right_extra_propensity_events
+    )
+
+
+    # If all events were handled, move on to the negative recursion,
+    # which I describe next.
+    # We know that all the "extra_propensities_react" are false,
+    # so we don't need to pass them.
+    return negative_recursion(reactions, reactants, reaction_data)
+    ```
+
+    ## The negative recursion
+
+    The positive recursion ensures that we have sampled all the reactants involved, and have sampled the number of times
+    they react. However, we didn't handle reactants being eliminated and not reacting yet, and the negative recursion
+    handles that.
+
+</div>
